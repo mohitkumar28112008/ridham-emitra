@@ -1,0 +1,4 @@
+node_modules/
+.env
+ridham-emitra.db
+.DS_Store
