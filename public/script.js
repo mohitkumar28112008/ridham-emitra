@@ -1,24 +1,30 @@
+
 const dateInput = document.getElementById("date");
 const slotsContainer = document.getElementById("slots");
 const selectedTimeInput = document.getElementById("selectedTime");
 
-const today = new Date().toISOString().split("T")[0];
+function getTodayLocal() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
 
 if (dateInput) {
-  dateInput.min = today;
-
+  dateInput.min = getTodayLocal();
   dateInput.addEventListener("change", loadSlots);
 }
 
-
+// LOAD BOOKING SLOTS
 async function loadSlots() {
+  if (!dateInput || !slotsContainer || !selectedTimeInput) return;
 
   const date = dateInput.value;
 
   if (!date) {
     slotsContainer.innerHTML =
       '<div class="slot-message">Please select a date first.</div>';
-
     return;
   }
 
@@ -28,112 +34,92 @@ async function loadSlots() {
   selectedTimeInput.value = "";
 
   try {
+    const response = await fetch(
+      `/api/slots?date=${encodeURIComponent(date)}`
+    );
 
-    const response = await fetch(`/api/slots?date=${date}`);
+    if (!response.ok) throw new Error("Unable to load slots");
+
     const slots = await response.json();
 
     slotsContainer.innerHTML = "";
 
-    slots.forEach(slot => {
+    if (!Array.isArray(slots) || slots.length === 0) {
+      slotsContainer.innerHTML =
+        '<div class="slot-message">No slots available.</div>';
+      return;
+    }
 
+    slots.forEach((slot) => {
       const button = document.createElement("button");
 
       button.type = "button";
       button.className = "slot";
-
-      button.textContent =
-        slot.available
-          ? `${slot.time}`
-          : `${slot.time} - Full`;
+      button.textContent = slot.available
+        ? slot.time
+        : `${slot.time} - Full`;
 
       if (!slot.available) {
         button.classList.add("disabled");
         button.disabled = true;
-      }
-
-      if (slot.available) {
-
+      } else {
         button.addEventListener("click", () => {
-
-          document
-            .querySelectorAll(".slot")
-            .forEach(item => item.classList.remove("selected"));
+          document.querySelectorAll(".slot").forEach((item) => {
+            item.classList.remove("selected");
+          });
 
           button.classList.add("selected");
-
           selectedTimeInput.value = slot.time;
-
         });
-
       }
 
       slotsContainer.appendChild(button);
-
     });
-
   } catch (error) {
-
     console.error(error);
 
     slotsContainer.innerHTML =
       '<div class="slot-message">Unable to load slots.</div>';
-
   }
 }
 
-
-// APPOINTMENT FORM
-
-const appointmentForm =
-  document.getElementById("appointmentForm");
+// APPOINTMENT BOOKING
+const appointmentForm = document.getElementById("appointmentForm");
 
 if (appointmentForm) {
-
   appointmentForm.addEventListener("submit", async (event) => {
-
     event.preventDefault();
 
-    const name =
-      document.getElementById("name").value.trim();
-
-    const phone =
-      document.getElementById("phone").value.trim();
-
-    const service =
-      document.getElementById("service").value;
-
-    const date =
-      document.getElementById("date").value;
-
-    const time =
-      document.getElementById("selectedTime").value;
-
+    const name = document.getElementById("name").value.trim();
+    const phone = document.getElementById("phone").value.trim();
+    const service = document.getElementById("service").value;
+    const date = document.getElementById("date").value;
+    const time = document.getElementById("selectedTime").value;
 
     if (!time) {
-
       alert("Please select a time slot.");
-
       return;
     }
 
+    if (!/^[6-9]\d{9}$/.test(phone)) {
+      alert("Please enter a valid 10-digit Indian mobile number.");
+      return;
+    }
 
     const submitButton =
       appointmentForm.querySelector("button[type='submit']");
 
-    submitButton.disabled = true;
-    submitButton.textContent = "Booking...";
-
+    if (submitButton) {
+      submitButton.disabled = true;
+      submitButton.textContent = "Booking...";
+    }
 
     try {
-
       const response = await fetch("/api/appointments", {
-
         method: "POST",
-
         headers: {
           "Content-Type": "application/json"
         },
-
         body: JSON.stringify({
           name,
           phone,
@@ -141,80 +127,72 @@ if (appointmentForm) {
           date,
           time
         })
-
       });
-
 
       const data = await response.json();
 
-
       if (!response.ok) {
-
         alert(data.error || "Unable to book appointment.");
-
-        submitButton.disabled = false;
-        submitButton.textContent = "Confirm Appointment →";
-
         return;
       }
 
+      // Use the submitted phone if the server omits it.
+      const appointment = {
+        ...data.appointment,
+        phone: data.appointment?.phone || phone
+      };
 
-      showSuccessModal(data.appointment);
+      showSuccessModal(appointment);
 
       appointmentForm.reset();
-
       selectedTimeInput.value = "";
 
       slotsContainer.innerHTML =
         '<div class="slot-message">Please select a date first.</div>';
 
     } catch (error) {
-
       console.error(error);
-
       alert("Something went wrong. Please try again.");
-
+    } finally {
+      if (submitButton) {
+        submitButton.disabled = false;
+        submitButton.textContent = "Confirm Appointment →";
+      }
     }
-
-
-    submitButton.disabled = false;
-    submitButton.textContent = "Confirm Appointment →";
-
   });
-
 }
 
-
-// SUCCESS MODAL
-
+// BOOKING SUCCESS MODAL
 function showSuccessModal(appointment) {
+  const modal = document.getElementById("successModal");
+  const details = document.getElementById("appointmentDetails");
+  const whatsappButton = document.getElementById("whatsappButton");
 
-  const modal =
-    document.getElementById("successModal");
+  if (!modal || !details) return;
 
-  const details =
-    document.getElementById("appointmentDetails");
+  details.innerHTML = "";
 
-  details.innerHTML = `
+  const fields = [
+    ["Token", appointment.token],
+    ["Name", appointment.name],
+    ["Service", appointment.service],
+    ["Date", formatDate(appointment.date)],
+    ["Time", appointment.time]
+  ];
 
-    <div><strong>Token:</strong> ${appointment.token}</div>
+  fields.forEach(([label, value]) => {
+    const div = document.createElement("div");
+    const strong = document.createElement("strong");
 
-    <div><strong>Name:</strong> ${appointment.name}</div>
+    strong.textContent = `${label}: `;
+    div.appendChild(strong);
+    div.appendChild(document.createTextNode(value || ""));
+    details.appendChild(div);
+  });
 
-    <div><strong>Service:</strong> ${appointment.service}</div>
+  const message = `Namaste ${appointment.name}!
 
-    <div><strong>Date:</strong> ${formatDate(appointment.date)}</div>
-
-    <div><strong>Time:</strong> ${appointment.time}</div>
-
-  `;
-
-
-  const message =
-
-`Hello Ridham eMitra,
-
-My appointment has been booked successfully.
+Ridham eMitra mein aapki appointment successfully book ho gayi hai.
 
 Token: ${appointment.token}
 Name: ${appointment.name}
@@ -222,32 +200,44 @@ Service: ${appointment.service}
 Date: ${formatDate(appointment.date)}
 Time: ${appointment.time}
 
-Thank you.`;
+Address:
+Palwas Chauraha, Bikaner Bypass,
+Sikar, Rajasthan
 
+Dhanyavaad!
+Ridham eMitra`;
 
-  const whatsappUrl =
-    `https://wa.me/919785421306?text=${encodeURIComponent(message)}`;
+  // Customer's own WhatsApp number
+  const phone = String(appointment.phone || "").replace(/\D/g, "");
 
+  const whatsappNumber =
+    phone.length === 10 ? `91${phone}` : phone;
 
-  document.getElementById("whatsappButton").href =
-    whatsappUrl;
+  if (whatsappButton) {
+    whatsappButton.href =
+      `https://wa.me/${whatsappNumber}?text=${encodeURIComponent(message)}`;
 
+    whatsappButton.target = "_blank";
+    whatsappButton.rel = "noopener noreferrer";
+    whatsappButton.textContent = "Send Confirmation on WhatsApp";
+
+    whatsappButton.style.display =
+      /^91[6-9]\d{9}$/.test(whatsappNumber) ? "" : "none";
+  }
 
   modal.classList.add("show");
-
 }
-
 
 function closeModal() {
+  const modal = document.getElementById("successModal");
 
-  document
-    .getElementById("successModal")
-    .classList.remove("show");
-
+  if (modal) {
+    modal.classList.remove("show");
+  }
 }
 
-
 function formatDate(dateString) {
+  if (!dateString) return "";
 
   const date = new Date(dateString + "T00:00:00");
 
@@ -256,126 +246,80 @@ function formatDate(dateString) {
     month: "long",
     year: "numeric"
   });
-
 }
 
-
 // SEARCH APPOINTMENT
-
 async function searchAppointment() {
+  const input = document.getElementById("searchValue");
+  const result = document.getElementById("searchResult");
 
-  const value =
-    document.getElementById("searchValue").value.trim();
+  if (!input || !result) return;
 
-  const result =
-    document.getElementById("searchResult");
-
+  const value = input.value.trim();
 
   if (!value) {
-
-    result.innerHTML =
-      '<div class="result-error">Please enter your token or mobile number.</div>';
-
+    result.textContent = "Please enter your token or mobile number.";
     return;
   }
 
-
-  result.innerHTML =
-    "<p>Searching...</p>";
-
+  result.textContent = "Searching...";
 
   try {
-
     let url;
 
     if (/^RDM-/i.test(value)) {
-
       url =
         `/api/appointments/search?token=${encodeURIComponent(value)}`;
-
     } else {
-
       url =
         `/api/appointments/search?phone=${encodeURIComponent(value)}`;
-
     }
 
-
-    const response =
-      await fetch(url);
-
-    const data =
-      await response.json();
-
+    const response = await fetch(url);
+    const data = await response.json();
 
     if (!response.ok) {
-
-      result.innerHTML =
-        `<div class="result-error">${data.error}</div>`;
-
+      result.textContent = data.error || "Appointment not found.";
       return;
     }
 
+    result.innerHTML = "";
 
-    result.innerHTML = `
+    const card = document.createElement("div");
+    card.className = "result-card";
 
-      <div class="result-card">
+    const fields = [
+      ["Token", data.token],
+      ["Name", data.name],
+      ["Service", data.service],
+      ["Date", formatDate(data.date)],
+      ["Time", data.time],
+      ["Status", data.status]
+    ];
 
-        <p>
-          <strong>Token:</strong>
-          ${data.token}
-        </p>
+    fields.forEach(([label, value]) => {
+      const p = document.createElement("p");
+      const strong = document.createElement("strong");
 
-        <p>
-          <strong>Name:</strong>
-          ${data.name}
-        </p>
+      strong.textContent = `${label}: `;
+      p.appendChild(strong);
+      p.appendChild(document.createTextNode(value || ""));
+      card.appendChild(p);
+    });
 
-        <p>
-          <strong>Service:</strong>
-          ${data.service}
-        </p>
-
-        <p>
-          <strong>Date:</strong>
-          ${formatDate(data.date)}
-        </p>
-
-        <p>
-          <strong>Time:</strong>
-          ${data.time}
-        </p>
-
-        <p>
-          <strong>Status:</strong>
-          ${data.status}
-        </p>
-
-      </div>
-
-    `;
+    result.appendChild(card);
 
   } catch (error) {
-
     console.error(error);
-
-    result.innerHTML =
-      '<div class="result-error">Unable to search appointment.</div>';
-
+    result.textContent = "Unable to search appointment.";
   }
-
 }
 
-
 // CLOSE MODAL WHEN CLICKING OUTSIDE
-
 window.addEventListener("click", (event) => {
+  const modal = document.getElementById("successModal");
 
-  const modal =
-    document.getElementById("successModal");
-
-  if (event.target === modal) {
+  if (modal && event.target === modal) {
     closeModal();
   }
-
 });
